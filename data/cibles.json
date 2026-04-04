@@ -1,0 +1,20 @@
+{
+    "cibles": [
+        {
+            "nom": "Google DNS",
+            "type": "ping",
+            "adresse": "8.8.8.8"
+        },
+        {
+            "nom": "Mon site web",
+            "type": "http",
+            "adresse": "https://google.com"
+        },
+        {
+            "nom": "Passerelle locale",
+            "type": "ping",
+            "adresse": "192.168.1.1"
+        }
+    ],
+    "intervalle": 30
+}
