@@ -1,15 +1,28 @@
 """
-Module d'analyse - SAE 2.03 - Baraka'IT Solution
-Analyse les résultats de collecte (ICMP / HTTP) et retourne un état binaire.
+=============================================================================
+Module : affichage.py
+Projet : SAE 2.03 – Logiciel de supervision réseau
+Auteurs : Groupe 2
+Version : 2.0
 
-Statuts en sortie : "OK" ou "ANOMALIE" uniquement (règle absolue du projet).
+Rôle :
+    Interface graphique de l'application de supervision.
+    Permet la gestion (CRUD) des équipements supervisés avec affichage
+    codé selon leur statut (NORMAL / ANOMALIE / HORS LIGNE).
 
-Note technique : la détection utilise 3 seuils internes pour plus de précision,
-mais la sortie est toujours binaire (DEGRADE est mappé sur ANOMALIE en sortie).
+Tâches couvertes :
+    - P2-1 : Fenêtre principale Tkinter
+    - P2-2 : Tableau des équipements (Treeview)
+    - P3-2 : Filtres (implémentés via barre de recherche)
+    - P3-3 : Barre de recherche (filtrage dynamique)
+    - P3-4 : Bouton "Ajouter équipement" (fenêtre modale)
 
-Auteur : Équipe Baraka'IT Solution
-Version : 3.1
-Date : Avril 2026
+Dépendances :
+    - tkinter (natif)
+    - ttk   (natif)
+
+Aucune dépendance externe requise (CustomTkinter non utilisé ici).
+=============================================================================
 """
 
 # ---------------------------------------------------------------------------
