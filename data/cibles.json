@@ -1,20 +1,24 @@
 {
     "cibles": [
         {
-            "nom": "Google DNS",
-            "type": "ping",
-            "adresse": "8.8.8.8"
+            "nom"    : "DNS Google",
+            "adresse": "8.8.8.8",
+            "type"   : "ping"
         },
         {
-            "nom": "Mon site web",
-            "type": "http",
-            "adresse": "https://google.com"
+            "nom"    : "DNS Cloudflare",
+            "adresse": "1.1.1.1",
+            "type"   : "ping"
         },
         {
-            "nom": "Passerelle locale",
-            "type": "ping",
-            "adresse": "192.168.1.1"
+            "nom"    : "Google Web",
+            "adresse": "https://google.com",
+            "type"   : "http"
+        },
+        {
+            "nom"    : "Serveur inexistant",
+            "adresse": "192.168.99.99",
+            "type"   : "ping"
         }
-    ],
-    "intervalle": 30
+    ]
 }
