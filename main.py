@@ -1,28 +1,22 @@
 """
 =============================================================================
-Module : main.py
-Projet : SAE 2.03 – Logiciel de supervision réseau
+Module  : main.py
+Projet  : SAE 2.03 – Logiciel de supervision réseau
 Auteurs : Groupe 2
-Version : 1.0
+Version : 1.2 — P3-4 final
 
 Tâches couvertes :
-    - P2-6 : Lier la collecte au tableau (afficher_tableau)
-    - P2-7 : Boucle de supervision avec rafraîchissement (while + sleep interruptible)
-    - P2-8 : Zone d'alerte (enregistrer_alerte)
+    P2-6 : Lier la collecte au tableau d'affichage
+    P2-7 : Boucle de supervision avec rafraîchissement automatique
+    P2-8 : Zone d'alerte (mémorisation de la dernière anomalie)
+    P3-4 : Paramétrage depuis config.json (intervalle, debug, une seule fois)
 
-Rôle :
-    Point d'entrée principal.
-    Boucle périodique qui orchestre la collecte, l'analyse, le stockage,
-    les alertes et l'affichage.
-
-Dépendances :
-    - src.collecte   : ping(), check_url()
-    - src.analyse    : analyser()
-    - src.alerte     : alerte_console(), alerte_journal()
-    - src.stockage   : sauvegarder_resultat()
-    - src.affichage  : afficher_tableau(), enregistrer_alerte()
-
-Aucune dépendance externe requise (hors modules internes).
+Fonctionnement :
+    1. Charge config.json      → intervalle, mode debug, mode une seule fois
+    2. Charge cibles.json      → liste des équipements à superviser
+    3. Lance la boucle de supervision dans le thread principal
+    4. Chaque cycle : collecte → analyse → stockage → alerte → affichage
+    5. Ctrl+C pour arrêt propre
 =============================================================================
 """
 
@@ -30,85 +24,80 @@ import json
 import time
 import signal
 import sys
-from src.collecte import ping, check_url
-from src.analyse import analyser
-from src.alerte import alerte_console, alerte_journal
-from src.stockage import sauvegarder_resultat
-from src.affichage import afficher_tableau, enregistrer_alerte
+
+from src.collecte       import ping, check_url
+from src.analyse        import analyser
+from src.alerte         import alerte_console, alerte_journal
+from src.stockage       import sauvegarder_resultat
+from src.affichage      import afficher_tableau, enregistrer_alerte
+from src.config_manager import (
+    charger_configuration,
+    get_intervalle,
+    est_mode_debug,
+    est_mode_une_seule_fois,
+    get_seuil_ok_icmp,
+    get_seuil_ok_http,
+)
 
 
 # =============================================================================
 # CONSTANTES
 # =============================================================================
 
-CONFIG_FILE = "data/cibles.json"
-"""
-Chemin vers le fichier de configuration des cibles.
-Format attendu : JSON avec clé "cibles" (liste) et optionnellement "intervalle".
-"""
+CHEMIN_CIBLES = "data/cibles.json"
 
 
 # =============================================================================
-# GESTION DE L'ARRÊT PROPRE (Ctrl+C) - P2-7
+# GESTION DE L'ARRÊT PROPRE (Ctrl+C)
 # =============================================================================
-# Sans cette gestion, Ctrl+C provoquerait une stacktrace et un arrêt brutal.
-# Le signal.SIGINT est intercepté pour permettre une sortie propre.
 
-arret_demande = False
-"""
-Variable globale booléenne.
-Devient True lorsque l'utilisateur appuie sur Ctrl+C.
-Permet une sortie propre de la boucle de supervision.
-"""
+_arret_demande = False
 
-def arreter(signum, frame):
+
+def _arreter(signum, frame):
+    """Intercepte Ctrl+C pour un arrêt propre sans stacktrace."""
+    global _arret_demande
+    _arret_demande = True
+    print("\n[INFO] Arrêt demandé — fin du cycle en cours puis arrêt...")
+
+
+signal.signal(signal.SIGINT, _arreter)
+
+
+# =============================================================================
+# CHARGEMENT DES CIBLES
+# =============================================================================
+
+def charger_cibles():
     """
-    Handler pour le signal SIGINT (Ctrl+C).
-    Args:
-        signum : Numéro du signal reçu (non utilisé)
-        frame  : Contexte d'exécution (non utilisé)
-    Modifie la variable globale arret_demande pour stopper la boucle.
-    """
-    global arret_demande
-    arret_demande = True
-    print("\n[INFO] Signal reçu. Arrêt propre en cours...")
-
-# Enregistrement du handler pour le signal d'interruption clavier
-signal.signal(signal.SIGINT, arreter)
-
-
-# =============================================================================
-# CHARGEMENT DE LA CONFIGURATION
-# =============================================================================
-
-def charger_config():
-    """
-    Charge le fichier de configuration JSON (data/cibles.json).
+    Charge la liste des équipements depuis data/cibles.json.
 
     Structure attendue :
     {
-        "intervalle": 30,
         "cibles": [
-            {"nom": "Google DNS", "adresse": "8.8.8.8",           "type": "ping"},
-            {"nom": "Google",     "adresse": "https://google.com", "type": "http"}
+            {"nom": "DNS Google",  "adresse": "8.8.8.8",            "type": "ping"},
+            {"nom": "Google Web",  "adresse": "https://google.com",  "type": "http"}
         ]
     }
 
-    Gère les erreurs :
-        - Fichier introuvable → affiche erreur et quitte (sys.exit)
-        - JSON invalide      → affiche erreur et quitte
-
     Returns:
-        dict: Configuration complète
+        list : Liste des cibles (dicts)
     """
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(CHEMIN_CIBLES, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        cibles = data.get("cibles", [])
+        if not cibles:
+            print(f"[AVERTISSEMENT] Aucune cible dans '{CHEMIN_CIBLES}'.")
+        return cibles
+
     except FileNotFoundError:
-        print(f"[ERREUR] Fichier de configuration introuvable : {CONFIG_FILE}")
+        print(f"[ERREUR] Fichier de cibles introuvable : '{CHEMIN_CIBLES}'")
+        print(f"[ERREUR] Créez le fichier avec au moins une cible et relancez.")
         sys.exit(1)
+
     except json.JSONDecodeError as e:
-        print(f"[ERREUR] Fichier JSON invalide : {e}")
+        print(f"[ERREUR] '{CHEMIN_CIBLES}' est mal formé : {e}")
         sys.exit(1)
 
 
@@ -116,112 +105,159 @@ def charger_config():
 # COLLECTE D'UNE CIBLE
 # =============================================================================
 
-def collecter_cible(cible):
+def collecter_cible(cible, mode_debug=False):
     """
-    Effectue la vérification d'une cible (ping ou HTTP).
-    Calcule le temps de réponse et retourne un résultat structuré.
+    Effectue la vérification d'une cible (ping ICMP ou HTTP).
+    Mesure le temps de réponse et retourne un résultat normalisé.
+
+    Statuts possibles : "OK" ou "ANOMALIE" uniquement.
+    Les seuils de latence sont lus depuis config.json (P3-4).
 
     Args:
-        cible (dict): {"nom": str, "adresse": str, "type": "ping"|"http"}
+        cible      (dict) : {"nom", "adresse", "type"}
+        mode_debug (bool) : Affiche des logs détaillés si True
 
     Returns:
-        dict: {"cible": str, "statut": str, "message": str}
-              ou None si le type est inconnu
+        dict : {"cible", "statut", "message"} ou None si type inconnu
     """
-    nom     = cible["nom"]
-    adresse = cible["adresse"]
-    type_   = cible["type"]
+    nom     = cible.get("nom",     "Inconnu")
+    adresse = cible.get("adresse", "")
+    type_   = cible.get("type",    "").lower()
 
+    if mode_debug:
+        print(f"[DEBUG] Vérification de '{nom}' ({adresse}) via {type_.upper()}")
+
+    # ── Collecte ICMP ─────────────────────────────────────────────────────────
     if type_ == "ping":
-        debut   = time.time()
-        ok      = ping(adresse)
-        temps   = time.time() - debut if ok else None
-        statut  = analyser(temps)
-        message = f"Réponse en {temps * 1000:.0f}ms" if ok else "Timeout"
+        debut     = time.time()
+        joignable = ping(adresse)
+        temps_ms  = (time.time() - debut) * 1000 if joignable else None
 
+        # Seuil OK lu depuis config.json — au-dessus → ANOMALIE
+        seuil = get_seuil_ok_icmp()
+        if joignable and temps_ms is not None and temps_ms <= seuil:
+            statut  = "OK"
+            message = f"Réponse en {temps_ms:.0f}ms"
+        elif joignable:
+            # Joignable mais trop lent → ANOMALIE
+            statut  = "ANOMALIE"
+            message = f"Trop lent : {temps_ms:.0f}ms (seuil : {seuil}ms)"
+        else:
+            statut  = "ANOMALIE"
+            message = "Timeout — hôte injoignable"
+
+    # ── Collecte HTTP ─────────────────────────────────────────────────────────
     elif type_ == "http":
-        debut   = time.time()
-        ok      = check_url(adresse)
-        temps   = time.time() - debut if ok else None
-        statut  = analyser(temps)
-        message = f"Réponse en {temps * 1000:.0f}ms" if ok else "Site inaccessible"
+        debut     = time.time()
+        joignable = check_url(adresse)
+        temps_ms  = (time.time() - debut) * 1000 if joignable else None
 
+        seuil = get_seuil_ok_http()
+        if joignable and temps_ms is not None and temps_ms <= seuil:
+            statut  = "OK"
+            message = f"Réponse en {temps_ms:.0f}ms"
+        elif joignable:
+            statut  = "ANOMALIE"
+            message = f"Trop lent : {temps_ms:.0f}ms (seuil : {seuil}ms)"
+        else:
+            statut  = "ANOMALIE"
+            message = "Site inaccessible"
+
+    # ── Type inconnu ──────────────────────────────────────────────────────────
     else:
-        print(f"[AVERTISSEMENT] Type inconnu ignoré : '{type_}' pour {nom}")
+        print(f"[AVERTISSEMENT] Type '{type_}' inconnu pour '{nom}' — ignoré.")
         return None
 
+    if mode_debug:
+        print(f"[DEBUG] '{nom}' → {statut} ({message})")
+
     return {
-        "cible":   nom,
-        "statut":  statut,
-        "message": message
+        "cible"  : nom,
+        "statut" : statut,
+        "message": message,
     }
 
 
 # =============================================================================
-# BOUCLE PRINCIPALE DE SUPERVISION — P2-7
+# BOUCLE DE SUPERVISION
 # =============================================================================
 
-def boucle_supervision(cibles, intervalle):
+def boucle_supervision(cibles, intervalle, mode_debug=False, une_seule_fois=False):
     """
-    Boucle périodique de supervision.
-    Tourne indéfiniment jusqu'à Ctrl+C.
+    Boucle principale de supervision (P2-7 + P3-4).
+
+    Tourne indéfiniment jusqu'à Ctrl+C, sauf si mode "une seule fois"
+    est activé dans config.json — dans ce cas, 1 cycle puis arrêt (P3-4 bonus).
 
     À chaque cycle :
-        1. Collecte tous les équipements
-        2. Stocke chaque résultat en JSON
-        3. Alerte si anomalie + mémorise pour zone d'alerte (P2-8)
-        4. Rafraîchit le tableau (P2-6, P2-7)
-        5. Attend l'intervalle configuré (attente interruptible)
+        1. Collecte chaque cible (ICMP ou HTTP)
+        2. Sauvegarde le résultat dans historique.json
+        3. Déclenche les alertes si ANOMALIE
+        4. Mémorise la dernière anomalie (zone d'alerte P2-8)
+        5. Rafraîchit l'affichage (P2-6)
+        6. Attend l'intervalle configuré avant le prochain cycle
 
     Args:
-        cibles     (list): Liste des cibles depuis la config
-        intervalle (int) : Secondes entre chaque cycle
+        cibles         (list) : Équipements à superviser
+        intervalle     (int)  : Secondes entre chaque cycle (P3-4 : depuis config.json)
+        mode_debug     (bool) : Logs détaillés si True
+        une_seule_fois (bool) : 1 cycle puis arrêt si True (P3-4 bonus)
     """
-    global arret_demande
+    global _arret_demande
     numero_cycle = 0
 
-    while not arret_demande:
+    if une_seule_fois:
+        print("[INFO] Mode 'une seule fois' actif — 1 cycle puis arrêt automatique.")
+
+    while not _arret_demande:
         numero_cycle += 1
         resultats_cycle = []
         debut_cycle     = time.time()
 
-        print(f"[INFO] Cycle #{numero_cycle} en cours...")  # Debug
+        if mode_debug:
+            print(f"\n[DEBUG] ── Cycle #{numero_cycle} démarré ──")
 
-        # ── 1. Collecte de toutes les cibles ─────────────────────────────
+        # ── 1. Collecte de toutes les cibles ─────────────────────────────────
         for cible in cibles:
-            resultat = collecter_cible(cible)
+            resultat = collecter_cible(cible, mode_debug)
 
             if resultat is None:
-                continue  # type inconnu, on passe
+                continue  # type inconnu → ignoré
 
-            # ── 2. Stockage JSON ──────────────────────────────────────────
+            # ── 2. Sauvegarde JSON ────────────────────────────────────────────
             sauvegarder_resultat(
                 resultat["cible"],
-                cible["type"],
+                cible.get("type", "ping"),
                 resultat["statut"],
-                resultat["message"]
+                resultat["message"],
             )
 
-            # ── 3. Alertes si anomalie + mémorisation P2-8 ────────────────
+            # ── 3. Alertes et mémorisation zone d'alerte (P2-8) ──────────────
             if resultat["statut"] == "ANOMALIE":
-                alerte_console(f"{resultat['cible']} : {resultat['message']}")
-                alerte_journal(f"{resultat['cible']} : {resultat['message']}")
+                msg_alerte = f"{resultat['cible']} : {resultat['message']}"
+                alerte_console(msg_alerte)
+                alerte_journal(msg_alerte)
                 enregistrer_alerte(resultat["cible"], resultat["message"])
 
             resultats_cycle.append(resultat)
 
-        # ── 4. Rafraîchissement du tableau (P2-6, P2-7) + zone alerte (P2-8) ──
-        timestamp = time.strftime("%d/%m/%Y %H:%M:%S")
-        afficher_tableau(resultats_cycle, timestamp, intervalle)
+        # ── 4. Rafraîchissement de l'affichage (P2-6 + P3-4) ─────────────────
+        timestamp    = time.strftime("%d/%m/%Y %H:%M:%S")
+        temps_ecoule = time.time() - debut_cycle
+        afficher_tableau(resultats_cycle, timestamp, intervalle, temps_ecoule)
 
-        # ── 5. Attente interruptible avant prochain cycle (P2-7) ─────────────
-        temps_ecoule  = time.time() - debut_cycle
-        temps_attente = max(0, intervalle - temps_ecoule)
+        if mode_debug:
+            print(f"[DEBUG] Cycle #{numero_cycle} terminé en {temps_ecoule:.2f}s")
 
-        # Boucle d'attente par secondes permettant de vérifier arret_demande
-        # Plus réactive qu'un simple time.sleep(intervalle)
-        for _ in range(int(temps_attente)):
-            if arret_demande:
+        # ── 5. Mode "une seule fois" — arrêt après 1 cycle (P3-4 bonus) ──────
+        if une_seule_fois:
+            print(f"\n[INFO] Mode 'une seule fois' : cycle #{numero_cycle} exécuté. Arrêt.")
+            break
+
+        # ── 6. Attente interruptible avant le prochain cycle ──────────────────
+        temps_restant = max(0, intervalle - temps_ecoule)
+        for _ in range(int(temps_restant)):
+            if _arret_demande:
                 break
             time.sleep(1)
 
@@ -233,29 +269,36 @@ def boucle_supervision(cibles, intervalle):
 def main():
     """
     Point d'entrée principal.
-    Charge la configuration, affiche les infos de démarrage,
-    et lance la boucle de supervision.
+
+    Ordre de démarrage (P3-4) :
+        1. Charge config.json → paramètres globaux
+        2. Charge cibles.json → équipements à superviser
+        3. Lance la boucle avec les paramètres configurés
     """
     print("=" * 55)
-    print("   SUPERVISION RÉSEAU — SAE 2.03   Groupe 2")
+    print("   SUPERVISION RÉSEAU — SAE 2.03 — Groupe 2")
     print("=" * 55)
 
-    config     = charger_config()
-    cibles     = config["cibles"]
-    intervalle = config.get("intervalle", 30)
+    # ── Étape 1 : Chargement de la configuration (P3-4) ──────────────────────
+    charger_configuration()
+    intervalle     = get_intervalle()
+    mode_debug     = est_mode_debug()
+    une_seule_fois = est_mode_une_seule_fois()
 
-    print(f"[INFO] {len(cibles)} cibles chargées — intervalle : {intervalle}s")
-    print("[INFO] Démarrage de la supervision... (Ctrl+C pour arrêter)\n")
+    # ── Étape 2 : Chargement des cibles ──────────────────────────────────────
+    cibles = charger_cibles()
+    print(f"[INFO] {len(cibles)} cible(s) chargée(s) depuis '{CHEMIN_CIBLES}'")
+    print(f"[INFO] Intervalle : {intervalle}s  |  "
+          f"Debug : {mode_debug}  |  "
+          f"Une seule fois : {une_seule_fois}")
+    print("[INFO] Démarrage... (Ctrl+C pour arrêter)\n")
 
-    boucle_supervision(cibles, intervalle)
+    # ── Étape 3 : Lancement de la boucle ─────────────────────────────────────
+    boucle_supervision(cibles, intervalle, mode_debug, une_seule_fois)
 
     print("\n[INFO] Supervision arrêtée proprement.")
     print("=" * 55)
 
 
 if __name__ == "__main__":
-    """
-    Exécution uniquement si le fichier est lancé directement.
-    Évite l'exécution automatique lors d'un import.
-    """
     main()
