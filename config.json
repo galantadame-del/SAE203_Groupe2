@@ -1,1 +1,25 @@
-
+{
+    "intervalle_global": 30,
+    "unite_temps": "secondes",
+    "mode_debug": false,
+    "mode_une_seule_fois": false,
+    "analyse": {
+        "icmp": {
+            "seuil_ok_ms": 500
+        },
+        "http": {
+            "seuil_ok_ms": 3000
+        }
+    },
+    "alertes": {
+        "canaux_actifs": ["console", "journal"],
+        "email": {
+            "actif": false,
+            "destinataire": "admin@exemple.com",
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 587,
+            "user": "",
+            "password": ""
+        }
+    }
+}
