@@ -3,243 +3,251 @@
 Module : affichage.py
 Projet : SAE 2.03 – Logiciel de supervision réseau
 Auteurs : Groupe 2
-Version : 2.0
-
-Rôle :
-    Interface graphique de l'application de supervision.
-    Permet la gestion (CRUD) des équipements supervisés avec affichage
-    codé selon leur statut (NORMAL / ANOMALIE / HORS LIGNE).
+Version : 1.0
 
 Tâches couvertes :
-    - P2-1 : Fenêtre principale Tkinter
-    - P2-2 : Tableau des équipements (Treeview)
-    - P3-2 : Filtres (implémentés via barre de recherche)
-    - P3-3 : Barre de recherche (filtrage dynamique)
-    - P3-4 : Bouton "Ajouter équipement" (fenêtre modale)
+    - P2-6 : Lier la collecte au tableau (afficher_tableau)
+    - P2-7 : Rafraîchissement automatique de l'affichage (_effacer_terminal)
+    - P2-8 : Zone d'alerte (enregistrer_alerte, _afficher_zone_alerte)
+
+Rôle :
+    Affiche dans le terminal un tableau de supervision mis à jour
+    en temps réel, avec une zone d'alerte affichant la dernière anomalie.
 
 Dépendances :
-    - tkinter (natif)
-    - ttk   (natif)
+    - os (natif) : effacement du terminal (cls/clear)
+    - datetime (natif) : horodatage des alertes
 
-Aucune dépendance externe requise (CustomTkinter non utilisé ici).
+Aucune dépendance externe requise.
 =============================================================================
 """
 
-# ---------------------------------------------------------------------------
-# SEUILS PAR DÉFAUT (peuvent être surchargés par config.json)
-# ---------------------------------------------------------------------------
+import os
+from datetime import datetime
 
-CONFIG_PAR_DEFAUT = {
-    "icmp": {
-        "seuil_ok_ms": 50,       # <= 50ms  → OK
-        "seuil_degrade_ms": 500  # <= 500ms → dégradé interne, > 500ms → ANOMALIE
-    },
-    "http": {
-        "seuil_ok_ms": 1000,     # <= 1s    → OK
-        "seuil_degrade_ms": 2000 # <= 2s    → dégradé interne, > 2s   → ANOMALIE
+
+# =============================================================================
+# CONSTANTES — couleurs terminal (ANSI)
+# =============================================================================
+# Compatibles avec la majorité des terminaux modernes (Linux, Mac, Windows depuis
+# Windows 10). VERT et ROUGE pour les statuts, JAUNE pour les alertes,
+# BLEU pour l'en-tête, GRIS pour les informations secondaires.
+
+VERT   = "\033[92m"   # Succès / équipement OK
+ROUGE  = "\033[91m"   # Erreur / anomalie
+JAUNE  = "\033[93m"   # Attention / zone d'alerte
+BLEU   = "\033[94m"   # En-tête, informations générales
+GRIS   = "\033[90m"   # Informations secondaires (horodatage, temps restant)
+RESET  = "\033[0m"    # Réinitialisation des couleurs
+BOLD   = "\033[1m"    # Gras (mise en évidence)
+
+# Largeurs des colonnes pour l'affichage tabulaire (P2-6)
+# Ajustées pour un affichage lisible sur terminal standard (80-120 colonnes)
+LARGEUR_NOM     = 30   # Nom de l'équipement
+LARGEUR_STATUT  = 10   # Statut (UP / DOWN)
+LARGEUR_TEMPS   = 18   # Temps de réponse en ms
+LARGEUR_MESSAGE = 35   # Message détaillé
+
+
+# =============================================================================
+# VARIABLE GLOBALE — dernière alerte mémorisée (P2-8)
+# =============================================================================
+# Stocke la dernière anomalie détectée pour l'afficher dans la zone d'alerte.
+# Persiste entre les cycles de supervision.
+# Structure : {"cible": str, "message": str, "heure": str}
+# Peut être réinitialisée avec reinitialiser_alerte() (bonus).
+
+_derniere_alerte = None
+
+
+# =============================================================================
+# FONCTIONS INTERNES (préfixe _) — usage interne uniquement
+# =============================================================================
+
+def _effacer_terminal():
+    """
+    Efface le terminal pour simuler un rafraîchissement (P2-7).
+    Compatible Windows (cls) et Unix/Linux/Mac (clear).
+    Appelée avant chaque affichage pour éviter l'accumulation.
+    """
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def _formater_statut(statut):
+    """
+    Retourne le statut coloré pour l'affichage.
+    - OK → "UP" en vert gras
+    - Autre → "DOWN" en rouge gras
+
+    Args:
+        statut (str): "OK" ou autre (ANOMALIE, DEGRADE, etc.)
+
+    Returns:
+        str: Texte formaté avec codes ANSI
+    """
+    if statut == "OK":
+        return f"{VERT}{BOLD}{'UP':<10}{RESET}"
+    else:
+        return f"{ROUGE}{BOLD}{'DOWN':<10}{RESET}"
+
+
+def _formater_temps(message):
+    """
+    Extrait et formate le temps de réponse depuis le message de collecte.
+    Recherche un motif "Xms" et l'isole.
+
+    Args:
+        message (str): Message de la collecte (ex: "Réponse en 45ms")
+
+    Returns:
+        str: Temps formaté avec couleur, ou "—" en gris si non trouvé
+    """
+    if "ms" in message:
+        try:
+            for partie in message.split():
+                if "ms" in partie:
+                    temps = partie.replace("ms", "")
+                    return f"{BLEU}{temps + ' ms':<18}{RESET}"
+        except (ValueError, IndexError):
+            pass
+    return f"{GRIS}{'—':<18}{RESET}"
+
+
+def _ligne_separateur(car="-"):
+    """
+    Génère une ligne séparatrice de la largeur totale du tableau.
+    Utilisée pour délimiter les sections (en-tête, données, pied).
+
+    Args:
+        car (str): Caractère utilisé pour la ligne (défaut: "-")
+
+    Returns:
+        str: Ligne de caractères répétés
+    """
+    total = LARGEUR_NOM + LARGEUR_STATUT + LARGEUR_TEMPS + LARGEUR_MESSAGE + 13
+    return car * total
+
+
+# =============================================================================
+# ZONE D'ALERTE — P2-8
+# =============================================================================
+
+def enregistrer_alerte(cible, message):
+    """
+    Mémorise la dernière anomalie détectée pour l'afficher dans la zone d'alerte.
+    À appeler depuis main.py dès qu'une anomalie est détectée.
+
+    Args:
+        cible   (str): Nom de l'équipement en anomalie
+        message (str): Description du problème
+
+    Cette fonction est le point d'entrée principal pour la P2-8.
+    L'alerte reste affichée jusqu'à la prochaine anomalie (ou réinitialisation).
+    """
+    global _derniere_alerte
+    _derniere_alerte = {
+        "cible":   cible,
+        "message": message,
+        "heure":   datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     }
-}
-
-# Configuration active (modifiable via configurer_analyse())
-CONFIG = CONFIG_PAR_DEFAUT.copy()
 
 
-# ---------------------------------------------------------------------------
-# FONCTION DE CONFIGURATION
-# ---------------------------------------------------------------------------
-
-def configurer_analyse(config_dict):
+def reinitialiser_alerte():
     """
-    Surcharge la configuration depuis config.json.
-    À appeler une seule fois au démarrage dans main.py.
-
-    Exemple d'appel :
-        configurer_analyse(config["analyse"])
+    Réinitialise la zone d'alerte (bonus - P2-8 étendu).
+    À appeler lorsqu'aucune anomalie n'est détectée sur l'ensemble des cibles.
+    Permet d'effacer l'affichage de la dernière anomalie quand tout est revenu à OK.
     """
-    global CONFIG
-    for categorie in ["icmp", "http"]:
-        if categorie in config_dict:
-            CONFIG[categorie].update(config_dict[categorie])
+    global _derniere_alerte
+    _derniere_alerte = None
 
 
-# ---------------------------------------------------------------------------
-# FONCTION INTERNE : _etat_icmp (3 niveaux — usage interne uniquement)
-# ---------------------------------------------------------------------------
-
-def _etat_icmp(temps_ms):
+def _afficher_zone_alerte():
     """
-    Calcule l'état interne ICMP sur 3 niveaux.
-    Ne pas appeler directement depuis les autres modules.
-
-    Retourne : "OK", "_DEGRADE" ou "ANOMALIE"
+    Affiche la zone d'alerte dans le terminal (appelée par afficher_tableau).
+    Montre la dernière anomalie mémorisée, ou un message OK si aucune alerte.
     """
-    if temps_ms is None:
-        return "ANOMALIE"
+    print()
+    print(f"{BOLD}  ── ZONE D'ALERTE ─────────────────────────────────────{RESET}")
 
-    seuil_ok      = CONFIG["icmp"]["seuil_ok_ms"]
-    seuil_degrade = CONFIG["icmp"]["seuil_degrade_ms"]
-
-    if temps_ms <= seuil_ok:
-        return "OK"
-    elif temps_ms <= seuil_degrade:
-        return "_DEGRADE"  # préfixe _ = usage interne uniquement
+    if _derniere_alerte is None:
+        print(f"  {VERT}✔  Aucune anomalie détectée.{RESET}")
     else:
-        return "ANOMALIE"
+        print(f"  {ROUGE}{BOLD}⚠  DERNIÈRE ANOMALIE DÉTECTÉE{RESET}")
+        print(f"  {JAUNE}Équipement : {_derniere_alerte['cible']}{RESET}")
+        print(f"  {JAUNE}Problème   : {_derniere_alerte['message']}{RESET}")
+        print(f"  {GRIS}Heure      : {_derniere_alerte['heure']}{RESET}")
+
+    print(f"{BOLD}  ────────────────────────────────────────────────────────{RESET}")
 
 
-# ---------------------------------------------------------------------------
-# FONCTION INTERNE : _etat_http (3 niveaux — usage interne uniquement)
-# ---------------------------------------------------------------------------
+# =============================================================================
+# FONCTION PRINCIPALE — appelée depuis main.py (P2-6, P2-7, P2-8)
+# =============================================================================
 
-def _etat_http(accessible, temps_ms=None):
+def afficher_tableau(resultats, timestamp, intervalle):
     """
-    Calcule l'état interne HTTP sur 3 niveaux.
-    Ne pas appeler directement depuis les autres modules.
+    Point d'entrée principal pour l'affichage.
+    Appelée à chaque fin de cycle dans main.py.
 
-    Retourne : "OK", "_DEGRADE" ou "ANOMALIE"
+    Déroulement :
+        1. Efface le terminal (P2-7)
+        2. Affiche l'en-tête avec timestamp et temps restant (P2-7)
+        3. Affiche les en-têtes de colonnes
+        4. Affiche chaque ligne de résultat (P2-6)
+        5. Affiche les statistiques (UP / DOWN / Total)
+        6. Affiche la zone d'alerte (P2-8)
+
+    Args:
+        resultats  (list): Liste de dicts avec clés "cible", "statut", "message"
+        timestamp  (str) : Horodatage du cycle (format DD/MM/YYYY HH:MM:SS)
+        intervalle (int) : Secondes avant le prochain cycle (affiché dans l'en-tête)
     """
-    if not accessible:
-        return "ANOMALIE"
+    _effacer_terminal()   # P2-7 : rafraîchissement automatique
 
-    if temps_ms is None:
-        return "OK"
-
-    seuil_ok      = CONFIG["http"]["seuil_ok_ms"]
-    seuil_degrade = CONFIG["http"]["seuil_degrade_ms"]
-
-    if temps_ms <= seuil_ok:
-        return "OK"
-    elif temps_ms <= seuil_degrade:
-        return "_DEGRADE"
-    else:
-        return "ANOMALIE"
-
-
-# ---------------------------------------------------------------------------
-# FONCTION PUBLIQUE : analyser_icmp
-# ---------------------------------------------------------------------------
-
-def analyser_icmp(temps_ms):
-    """
-    Analyse un résultat ICMP et retourne l'état binaire.
-
-    Paramètres :
-        temps_ms (float | None) : temps de réponse en ms, ou None si injoignable.
-
-    Retourne :
-        str : "OK" ou "ANOMALIE"
-
-    Exemples :
-        analyser_icmp(None)   → "ANOMALIE"
-        analyser_icmp(12.0)   → "OK"
-        analyser_icmp(300.0)  → "ANOMALIE"
-        analyser_icmp(600.0)  → "ANOMALIE"
-    """
-    etat = _etat_icmp(temps_ms)
-    return "ANOMALIE" if etat == "_DEGRADE" else etat
-
-
-# ---------------------------------------------------------------------------
-# FONCTION PUBLIQUE : analyser_http
-# ---------------------------------------------------------------------------
-
-def analyser_http(accessible, temps_ms=None):
-    """
-    Analyse un résultat HTTP et retourne l'état binaire.
-
-    Paramètres :
-        accessible (bool)        : True si HTTP 200, False sinon.
-        temps_ms (float | None)  : temps de réponse en ms (optionnel).
-
-    Retourne :
-        str : "OK" ou "ANOMALIE"
-
-    Exemples :
-        analyser_http(False)              → "ANOMALIE"
-        analyser_http(True, 200.0)        → "OK"
-        analyser_http(True, 1500.0)       → "ANOMALIE"
-        analyser_http(True, 3500.0)       → "ANOMALIE"
-    """
-    etat = _etat_http(accessible, temps_ms)
-    return "ANOMALIE" if etat == "_DEGRADE" else etat
-
-
-# ---------------------------------------------------------------------------
-# POINT D'ENTRÉE UNIFIÉ : analyser
-# ---------------------------------------------------------------------------
-
-def analyser(type_check, **kwargs):
-    """
-    Point d'entrée unifié pour l'analyse, quel que soit le protocole.
-    Toujours en sortie binaire : "OK" ou "ANOMALIE".
-
-    Paramètres :
-        type_check (str) : "ICMP" ou "HTTP"
-        **kwargs         : temps_ms (float|None), accessible (bool)
-
-    Retourne :
-        str : "OK" ou "ANOMALIE"
-
-    Exemples d'appel depuis main.py :
-        analyser("ICMP", temps_ms=12.5)
-        analyser("ICMP", temps_ms=None)
-        analyser("HTTP", accessible=True, temps_ms=350.0)
-        analyser("HTTP", accessible=False)
-    """
-    if type_check == "ICMP":
-        return analyser_icmp(kwargs.get("temps_ms"))
-    elif type_check == "HTTP":
-        return analyser_http(
-            kwargs.get("accessible", False),
-            kwargs.get("temps_ms")
-        )
-    else:
-        return "ANOMALIE"  # type inconnu → ANOMALIE par sécurité
-
-
-# ---------------------------------------------------------------------------
-# TESTS LOCAUX — python analyse.py
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-
-    print("=== Tests module analyse.py v3.1 ===")
-    print("    Sortie toujours binaire : OK / ANOMALIE\n")
-
-    cas_icmp = [
-        (None,   "ANOMALIE"),
-        (10.0,   "OK"),
-        (75.0,   "ANOMALIE"),  # dégradé interne → ANOMALIE en sortie
-        (300.0,  "ANOMALIE"),
-        (600.0,  "ANOMALIE"),
-    ]
-
-    print("-- ICMP --")
-    for temps, attendu in cas_icmp:
-        resultat = analyser_icmp(temps)
-        symbole  = "✅" if resultat == attendu else "❌"
-        print(f"  {symbole} analyser_icmp({temps}) → {resultat}  (attendu : {attendu})")
-
+    # ── En-tête (P2-7 : affichage du temps restant) ────────────────────────
+    print(f"\n{BOLD}{BLEU}  SUPERVISION RÉSEAU — SAE 2.03{RESET}")
+    print(f"  {GRIS}Dernière mise à jour : {timestamp}   "
+          f"Prochain cycle dans : {intervalle}s{RESET}")
     print()
 
-    cas_http = [
-        (False, None,   "ANOMALIE"),
-        (True,  200.0,  "OK"),
-        (True,  1500.0, "ANOMALIE"),  # dégradé interne → ANOMALIE
-        (True,  2500.0, "ANOMALIE"),
-        (False, 100.0,  "ANOMALIE"),
-    ]
+    # ── En-têtes colonnes ────────────────────────────────────────────────────
+    print(_ligne_separateur("="))
+    print(
+        f"  {BOLD}{'ÉQUIPEMENT':<{LARGEUR_NOM}}"
+        f"{'STATUT':<{LARGEUR_STATUT}}"
+        f"{'TEMPS RÉPONSE':<{LARGEUR_TEMPS}}"
+        f"{'MESSAGE':<{LARGEUR_MESSAGE}}{RESET}"
+    )
+    print(_ligne_separateur("="))
 
-    print("-- HTTP --")
-    for accessible, temps, attendu in cas_http:
-        resultat = analyser_http(accessible, temps)
-        symbole  = "✅" if resultat == attendu else "❌"
-        print(f"  {symbole} analyser_http(accessible={accessible}, temps_ms={temps}) → {resultat}  (attendu : {attendu})")
+    # ── Lignes de données (P2-6) ────────────────────────────────────────────
+    if not resultats:
+        print(f"  {GRIS}Aucun résultat disponible.{RESET}")
+    else:
+        for r in resultats:
+            cible   = str(r.get("cible",   "—"))[:LARGEUR_NOM]
+            statut  = r.get("statut",  "ANOMALIE")
+            message = str(r.get("message", "—"))[:LARGEUR_MESSAGE]
 
-    print()
-    print("-- Fonction analyser() unifiée --")
-    print(f"  analyser('ICMP', temps_ms=12)     → {analyser('ICMP', temps_ms=12)}")
-    print(f"  analyser('ICMP', temps_ms=None)    → {analyser('ICMP', temps_ms=None)}")
-    print(f"  analyser('HTTP', accessible=True)  → {analyser('HTTP', accessible=True)}")
-    print(f"  analyser('HTTP', accessible=False) → {analyser('HTTP', accessible=False)}")
-    print(f"  analyser('INCONNU')                → {analyser('INCONNU')}")
+            print(
+                f"  {cible:<{LARGEUR_NOM}}"
+                f"{_formater_statut(statut)}"
+                f"{_formater_temps(message)}"
+                f"{message:<{LARGEUR_MESSAGE}}"
+            )
+
+    # ── Statistiques ─────────────────────────────────────────────────────────
+    print(_ligne_separateur("-"))
+    nb_ok       = sum(1 for r in resultats if r.get("statut") == "OK")
+    nb_anomalie = len(resultats) - nb_ok
+    print(
+        f"\n  {VERT}✔ UP : {nb_ok}{RESET}   "
+        f"{ROUGE}✘ DOWN : {nb_anomalie}{RESET}   "
+        f"{GRIS}Total : {len(resultats)}{RESET}"
+    )
+
+    # ── Zone d'alerte (P2-8) ─────────────────────────────────────────────────
+    _afficher_zone_alerte()
+
+    print(f"  {GRIS}Appuyez sur Ctrl+C pour arrêter.{RESET}\n")
