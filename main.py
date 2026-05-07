@@ -28,7 +28,7 @@ import sys
 from src.collecte       import ping, check_url
 from src.analyse        import analyser
 from src.alerte         import alerte_console, alerte_journal
-from src.stockage       import sauvegarder_resultat
+from src.stockage       import sauvegarder_evenement as sauvegarder_resultat
 from src.affichage      import afficher_tableau, enregistrer_alerte
 from src.config_manager import (
     charger_configuration,
