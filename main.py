@@ -244,7 +244,7 @@ def boucle_supervision(cibles, intervalle, mode_debug=False, une_seule_fois=Fals
         # ── 4. Rafraîchissement de l'affichage (P2-6 + P3-4) ─────────────────
         timestamp    = time.strftime("%d/%m/%Y %H:%M:%S")
         temps_ecoule = time.time() - debut_cycle
-        afficher_tableau(resultats_cycle, timestamp, intervalle, temps_ecoule)
+        afficher_tableau(resultats_cycle, timestamp, intervalle)
 
         if mode_debug:
             print(f"[DEBUG] Cycle #{numero_cycle} terminé en {temps_ecoule:.2f}s")
