@@ -88,15 +88,15 @@ python --version
 ### 1. Cloner le dépôt
 
 ```bash
-git clone https://github.com/votre-equipe/superviseur-reseau.git
-cd superviseur-reseau
+git clone https://github.com/galantadame-del/SAE203_Groupe2
+cd SAE203_Groupe2
 ```
 
 ### 2. Créer l'environnement virtuel
 
 ```bash
 # Création
-python -m venv venv
+python3 -m venv venv
 
 # Activation — Linux / macOS
 source venv/bin/activate
