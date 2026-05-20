@@ -3,20 +3,22 @@
 Module  : main.py
 Projet  : SAE 2.03 – Logiciel de supervision réseau
 Auteurs : Groupe 2
-Version : 1.2 — P3-4 final
+Version : 1.3 — P3-4 final + scan automatique
 
 Tâches couvertes :
     P2-6 : Lier la collecte au tableau d'affichage
     P2-7 : Boucle de supervision avec rafraîchissement automatique
     P2-8 : Zone d'alerte (mémorisation de la dernière anomalie)
     P3-4 : Paramétrage depuis config.json (intervalle, debug, une seule fois)
+    P3-5 : Scan automatique au premier lancement (découverte des équipements)
 
 Fonctionnement :
-    1. Charge config.json      → intervalle, mode debug, mode une seule fois
-    2. Charge cibles.json      → liste des équipements à superviser
-    3. Lance la boucle de supervision dans le thread principal
-    4. Chaque cycle : collecte → analyse → stockage → alerte → affichage
-    5. Ctrl+C pour arrêt propre
+    1. Si cibles.json est vide ou inexistant → scan automatique du réseau
+    2. Charge config.json      → intervalle, mode debug, mode une seule fois
+    3. Charge cibles.json      → liste des équipements à superviser
+    4. Lance la boucle de supervision dans le thread principal
+    5. Chaque cycle : collecte → analyse → stockage → alerte → affichage
+    6. Ctrl+C pour arrêt propre
 =============================================================================
 """
 
@@ -24,6 +26,7 @@ import json
 import time
 import signal
 import sys
+import os  # AJOUTÉ pour la gestion des fichiers
 
 from src.collecte       import ping, check_url
 from src.analyse        import analyser
@@ -45,6 +48,39 @@ from src.config_manager import (
 # =============================================================================
 
 CHEMIN_CIBLES = "data/cibles.json"
+
+
+# =============================================================================
+# SCAN AUTOMATIQUE AU PREMIER LANCEMENT (AJOUTÉ)
+# =============================================================================
+
+def verifier_et_scanner_si_necessaire():
+    """
+    Vérifie si cibles.json existe et contient des équipements.
+    Si non, lance le scanner automatiquement.
+    """
+    cibles_path = CHEMIN_CIBLES
+    
+    # Si le fichier n'existe pas
+    if not os.path.exists(cibles_path):
+        print("[INFO] Aucune cible configurée. Lancement du scan automatique...")
+        from scanner import scanner_et_mettre_a_jour
+        scanner_et_mettre_a_jour(forcer=True)
+        return
+    
+    # Si le fichier existe mais ne contient pas de cibles
+    try:
+        with open(cibles_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            cibles = data.get("cibles", [])
+            if not cibles:
+                print("[INFO] Aucune cible dans cibles.json. Lancement du scan automatique...")
+                from scanner import scanner_et_mettre_a_jour
+                scanner_et_mettre_a_jour(forcer=True)
+    except (json.JSONDecodeError, Exception):
+        print("[INFO] Fichier cibles.json corrompu. Lancement du scan automatique...")
+        from scanner import scanner_et_mettre_a_jour
+        scanner_et_mettre_a_jour(forcer=True)
 
 
 # =============================================================================
@@ -270,7 +306,8 @@ def main():
     """
     Point d'entrée principal.
 
-    Ordre de démarrage (P3-4) :
+    Ordre de démarrage (P3-4 + scan automatique) :
+        0. Si cibles.json est vide ou inexistant → scan automatique (AJOUTÉ)
         1. Charge config.json → paramètres globaux
         2. Charge cibles.json → équipements à superviser
         3. Lance la boucle avec les paramètres configurés
@@ -278,6 +315,9 @@ def main():
     print("=" * 55)
     print("   SUPERVISION RÉSEAU — SAE 2.03 — Groupe 2")
     print("=" * 55)
+
+    # ── Étape 0 : Scan automatique si nécessaire (AJOUTÉ) ─────────────────────
+    verifier_et_scanner_si_necessaire()
 
     # ── Étape 1 : Chargement de la configuration (P3-4) ──────────────────────
     charger_configuration()
