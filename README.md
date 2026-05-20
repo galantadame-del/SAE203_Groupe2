@@ -78,7 +78,7 @@ superviseur-reseau/
 
 Vérifier la version Python :
 ```bash
-python --version
+python3 --version
 ```
 
 ---
