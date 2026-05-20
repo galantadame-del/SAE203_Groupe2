@@ -26,7 +26,7 @@ import json
 import time
 import signal
 import sys
-import os  # AJOUTÉ pour la gestion des fichiers
+import os
 
 from src.collecte       import ping, check_url
 from src.analyse        import analyser
@@ -51,7 +51,7 @@ CHEMIN_CIBLES = "data/cibles.json"
 
 
 # =============================================================================
-# SCAN AUTOMATIQUE AU PREMIER LANCEMENT (AJOUTÉ)
+# SCAN AUTOMATIQUE AU PREMIER LANCEMENT
 # =============================================================================
 
 def verifier_et_scanner_si_necessaire():
@@ -307,7 +307,7 @@ def main():
     Point d'entrée principal.
 
     Ordre de démarrage (P3-4 + scan automatique) :
-        0. Si cibles.json est vide ou inexistant → scan automatique (AJOUTÉ)
+        0. Si cibles.json est vide ou inexistant → scan automatique
         1. Charge config.json → paramètres globaux
         2. Charge cibles.json → équipements à superviser
         3. Lance la boucle avec les paramètres configurés
@@ -316,7 +316,7 @@ def main():
     print("   SUPERVISION RÉSEAU — SAE 2.03 — Groupe 2")
     print("=" * 55)
 
-    # ── Étape 0 : Scan automatique si nécessaire (AJOUTÉ) ─────────────────────
+    # ── Étape 0 : Scan automatique si nécessaire ─────────────────────────────
     verifier_et_scanner_si_necessaire()
 
     # ── Étape 1 : Chargement de la configuration (P3-4) ──────────────────────
