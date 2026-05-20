@@ -41,7 +41,7 @@ from src.config_manager import (
     get_seuil_ok_icmp,
     get_seuil_ok_http,
 )
-
+from src.scanner import scanner_et_mettre_a_jour
 
 # =============================================================================
 # CONSTANTES
@@ -64,8 +64,8 @@ def verifier_et_scanner_si_necessaire():
     # Si le fichier n'existe pas
     if not os.path.exists(cibles_path):
         print("[INFO] Aucune cible configurée. Lancement du scan automatique...")
-        from scanner import scanner_et_mettre_a_jour
-        scanner_et_mettre_a_jour(forcer=True)
+        from src.scanner import scanner_et_mettre_a_jour
+        scanner_et_mettre_a_jour(forcer=True)  # ← aligné avec le from
         return
     
     # Si le fichier existe mais ne contient pas de cibles
