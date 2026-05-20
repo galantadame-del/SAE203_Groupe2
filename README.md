@@ -109,6 +109,8 @@ venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+ou bien
+pip3 install -r requirements.txt
 ```
 
 Dépendances installées :
