@@ -182,7 +182,7 @@ Modifier ce fichier pour lister les équipements de votre réseau :
 
 ```bash
 # Linux / macOS (droits ICMP requis)
-sudo python main.py
+sudo python3 main.py
 
 # Windows — lancer le terminal en tant qu'Administrateur
 python main.py
